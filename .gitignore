@@ -1,0 +1,26 @@
+# Secret keys — never upload this
+.env
+
+# Python virtual environment
+venv/
+.venv/
+env/
+
+# Python bytecode
+__pycache__/
+*.pyc
+*.pyo
+
+# VS Code settings
+.vscode/
+
+# Database files
+*.db
+*.sqlite
+
+# Windows junk files
+Thumbs.db
+desktop.ini
+
+# macOS junk files
+.DS_Store
