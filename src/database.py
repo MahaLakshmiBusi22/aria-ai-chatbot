@@ -29,12 +29,13 @@ def init_database():
         )
     """)
 
-    # Table 2: conversations (now linked to a user)
+    # Table 2: conversations (now linked to a user, with optional document)
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS conversations (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER NOT NULL,
             title TEXT NOT NULL,
+            document_name TEXT,
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL,
             FOREIGN KEY (user_id) REFERENCES users(id)
@@ -118,13 +119,25 @@ def create_conversation(user_id, title=None):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute("""
-        INSERT INTO conversations (user_id, title, created_at, updated_at)
-        VALUES (?, ?, ?, ?)
+        INSERT INTO conversations (user_id, title, document_name, created_at, updated_at)
+        VALUES (?, ?, NULL, ?, ?)
     """, (user_id, title, now, now))
     conversation_id = cursor.lastrowid
     conn.commit()
     conn.close()
     return conversation_id
+
+
+def set_conversation_document(conversation_id, document_name):
+    """Attach (or clear) a document to a specific conversation."""
+    now = datetime.now().isoformat()
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("""
+        UPDATE conversations SET document_name = ?, updated_at = ? WHERE id = ?
+    """, (document_name, now, conversation_id))
+    conn.commit()
+    conn.close()
 
 
 def save_message(conversation_id, role, content):
@@ -158,11 +171,11 @@ def load_conversation(conversation_id):
 
 
 def get_all_conversations(user_id):
-    """Get all conversations for a specific user (newest first)."""
+    """Get all conversations for a specific user (newest first), including document_name."""
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute("""
-        SELECT id, title, created_at, updated_at
+        SELECT id, title, document_name, created_at, updated_at
         FROM conversations
         WHERE user_id = ?
         ORDER BY updated_at DESC
@@ -170,7 +183,13 @@ def get_all_conversations(user_id):
     rows = cursor.fetchall()
     conn.close()
     return [
-        {"id": row[0], "title": row[1], "created_at": row[2], "updated_at": row[3]}
+        {
+            "id": row[0],
+            "title": row[1],
+            "document_name": row[2],
+            "created_at": row[3],
+            "updated_at": row[4]
+        }
         for row in rows
     ]
 
