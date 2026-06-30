@@ -1,8 +1,7 @@
 # src/app.py
-# Aria AI Chatbot — with Auth + Database + RAG + File Upload
+# Aria AI Chatbot — Production Ready (Ollama locally, Gemini on cloud)
 
 import streamlit as st
-import ollama
 import tempfile
 import os
 import sys
@@ -16,6 +15,7 @@ from database import (
 )
 from auth import register_user, login_user
 from rag import index_document, get_relevant_context, remove_document
+from llm import get_llm_response, get_current_llm
 
 # ─── Page Config ──────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -27,7 +27,7 @@ st.set_page_config(
 # ─── Init DB ──────────────────────────────────────────────────────────────────
 init_database()
 
-# ─── Session State Defaults ───────────────────────────────────────────────────
+# ─── Session State ────────────────────────────────────────────────────────────
 for key, default in {
     "logged_in": False,
     "user": None,
@@ -35,15 +35,12 @@ for key, default in {
     "message_count": 0,
     "document_name": None,
     "conversation_id": None,
-    "auth_mode": "login"
 }.items():
     if key not in st.session_state:
         st.session_state[key] = default
 
 # ─── System Prompt ────────────────────────────────────────────────────────────
-SYSTEM_MESSAGE = {
-    "role": "system",
-    "content": """You are Aria, an AI assistant helping beginner Python developers.
+SYSTEM_PROMPT = """You are Aria, an AI assistant helping beginner Python developers.
 
 YOUR RULES:
 1. You are Aria — never describe yourself as the user.
@@ -53,7 +50,6 @@ YOUR RULES:
 5. Never suggest ChatterBot or outdated tools.
 6. When document context is provided, answer ONLY from that context.
 7. When asked where someone is from — answer with their location."""
-}
 
 
 # ==============================================================================
@@ -90,15 +86,21 @@ def show_auth_page():
             st.subheader("Create your account")
             new_username = st.text_input("Choose a username", key="reg_username")
             new_email = st.text_input("Email address", key="reg_email")
-            new_password = st.text_input("Choose a password", type="password", key="reg_password")
-            confirm_password = st.text_input("Confirm password", type="password", key="reg_confirm")
+            new_password = st.text_input(
+                "Choose a password", type="password", key="reg_password"
+            )
+            confirm_password = st.text_input(
+                "Confirm password", type="password", key="reg_confirm"
+            )
 
             if st.button("Create Account", use_container_width=True, type="primary"):
                 if new_username and new_email and new_password and confirm_password:
                     if new_password != confirm_password:
                         st.error("Passwords do not match.")
                     else:
-                        success, message, user_id = register_user(new_username, new_email, new_password)
+                        success, message, user_id = register_user(
+                            new_username, new_email, new_password
+                        )
                         if success:
                             st.success(message + " Please login now.")
                         else:
@@ -112,12 +114,16 @@ def show_auth_page():
 # ==============================================================================
 def show_chat_page():
     user = st.session_state.user
+    current_llm = get_current_llm()
 
     # ─── Header ───────────────────────────────────────────────────────────────
     col1, col2 = st.columns([3, 1])
     with col1:
         st.title("🤖 Aria - AI Chatbot")
-        st.caption(f"Logged in as **{user['username']}** · Powered by Mistral locally")
+        st.caption(
+            f"Logged in as **{user['username']}** · "
+            f"Powered by **{current_llm}**"
+        )
     with col2:
         if st.button("🚪 Logout", use_container_width=True):
             st.session_state.logged_in = False
@@ -143,7 +149,6 @@ def show_chat_page():
 
         st.divider()
 
-        # Past Conversations
         st.header("🕓 My Conversations")
         all_convs = get_all_conversations(user["id"])
 
@@ -153,10 +158,18 @@ def show_chat_page():
             for conv in all_convs:
                 col_a, col_b = st.columns([4, 1])
                 with col_a:
-                    if st.button(conv["title"][:30], key=f"load_{conv['id']}", use_container_width=True):
-                        st.session_state.conversation_history = load_conversation(conv["id"])
+                    if st.button(
+                        conv["title"][:28],
+                        key=f"load_{conv['id']}",
+                        use_container_width=True
+                    ):
+                        st.session_state.conversation_history = load_conversation(
+                            conv["id"]
+                        )
                         st.session_state.conversation_id = conv["id"]
-                        st.session_state.message_count = len(st.session_state.conversation_history) // 2
+                        st.session_state.message_count = (
+                            len(st.session_state.conversation_history) // 2
+                        )
                         st.rerun()
                 with col_b:
                     if st.button("🗑", key=f"del_{conv['id']}"):
@@ -168,9 +181,8 @@ def show_chat_page():
 
         st.divider()
 
-        # File Upload with RAG
         st.header("📄 Upload Document")
-        st.caption("Aria will search the most relevant parts of your document to answer questions.")
+        st.caption("Aria searches the most relevant parts to answer.")
 
         uploaded_file = st.file_uploader(
             "Choose a file",
@@ -187,7 +199,7 @@ def show_chat_page():
                     tmp_file.write(uploaded_file.getvalue())
                     tmp_path = tmp_file.name
 
-                with st.spinner("Reading and indexing document..."):
+                with st.spinner("Indexing document..."):
                     document_text = read_document(tmp_path)
                     os.unlink(tmp_path)
 
@@ -195,15 +207,13 @@ def show_chat_page():
                         st.error(document_text)
                     else:
                         chunk_count = index_document(
-                            document_text,
-                            uploaded_file.name,
-                            user["id"]
+                            document_text, uploaded_file.name, user["id"]
                         )
                         st.session_state.document_name = uploaded_file.name
                         word_count = len(document_text.split())
                         st.success(f"✅ {uploaded_file.name} indexed!")
                         st.metric("Words", word_count)
-                        st.metric("Chunks indexed", chunk_count)
+                        st.metric("Chunks", chunk_count)
 
         if st.session_state.document_name:
             st.info(f"📄 Active: {st.session_state.document_name}")
@@ -213,7 +223,8 @@ def show_chat_page():
                 st.rerun()
 
         st.divider()
-        st.metric("Messages this session", st.session_state.message_count)
+        st.metric("Messages", st.session_state.message_count)
+        st.caption(f"🧠 {current_llm}")
 
     # ─── Chat Display ─────────────────────────────────────────────────────────
     for message in st.session_state.conversation_history:
@@ -230,48 +241,52 @@ def show_chat_page():
     if user_input:
         if st.session_state.conversation_id is None:
             title = user_input[:40] + "..." if len(user_input) > 40 else user_input
-            st.session_state.conversation_id = create_conversation(user["id"], title)
+            st.session_state.conversation_id = create_conversation(
+                user["id"], title
+            )
 
         with st.chat_message("user"):
             st.write(user_input)
 
-        # RAG: search for relevant document context
+        # RAG context
         if st.session_state.document_name:
             with st.spinner("Searching document..."):
                 context = get_relevant_context(
-                    user_input,
-                    st.session_state.document_name,
-                    user["id"],
-                    top_k=3
+                    user_input, st.session_state.document_name, user["id"], top_k=3
                 )
-
             if context:
-                full_message = f"""The user uploaded '{st.session_state.document_name}'.
-Most relevant sections found by search:
+                full_message = f"""Document '{st.session_state.document_name}' content:
 
 {context}
 
 User question: {user_input}
 
-Answer based only on the document content above."""
+Answer based only on the document above."""
             else:
                 full_message = user_input
         else:
             full_message = user_input
 
         save_message(st.session_state.conversation_id, "user", user_input)
-        st.session_state.conversation_history.append({"role": "user", "content": full_message})
+        st.session_state.conversation_history.append(
+            {"role": "user", "content": full_message}
+        )
 
         with st.chat_message("assistant", avatar="🤖"):
             with st.spinner("Aria is thinking..."):
                 try:
-                    messages_to_send = [SYSTEM_MESSAGE] + st.session_state.conversation_history
-                    response = ollama.chat(model="mistral", messages=messages_to_send)
-                    ai_reply = response["message"]["content"]
+                    ai_reply = get_llm_response(
+                        st.session_state.conversation_history,
+                        SYSTEM_PROMPT
+                    )
                     st.write(ai_reply)
 
-                    save_message(st.session_state.conversation_id, "assistant", ai_reply)
-                    st.session_state.conversation_history.append({"role": "assistant", "content": ai_reply})
+                    save_message(
+                        st.session_state.conversation_id, "assistant", ai_reply
+                    )
+                    st.session_state.conversation_history.append(
+                        {"role": "assistant", "content": ai_reply}
+                    )
                     st.session_state.message_count += 1
 
                 except Exception as e:
