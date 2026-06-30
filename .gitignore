@@ -24,3 +24,10 @@ desktop.ini
 
 # macOS junk files
 .DS_Store
+database/chroma/
+database/*.db
+database/*.sqlite3
+__pycache__/
+*.pyc
+venv/
+.env
